@@ -1,0 +1,92 @@
+{
+	"info": {
+		"_postman_id": "42abf5fd-c386-44e7-8b1a-a6d918d32dac",
+		"name": "n8n",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "46448313"
+	},
+	"item": [
+		{
+			"name": "Subir Factura",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "facturaInfo",
+							"type": "file",
+							"src": "/C:/Users/Wilber/Desktop/factura_1-58.PNG"
+						},
+						{
+							"key": "estadoFactura",
+							"value": "ANULADO",
+							"type": "text"
+						},
+						{
+							"key": "tipoFactura",
+							"value": "VENTA",
+							"type": "text"
+						}
+					]
+				},
+				"url": {
+					"raw": "https://wilbermamanisalguero.app.n8n.cloud/webhook-test/subir-factura",
+					"protocol": "https",
+					"host": [
+						"wilbermamanisalguero",
+						"app",
+						"n8n",
+						"cloud"
+					],
+					"path": [
+						"webhook-test",
+						"subir-factura"
+					]
+				},
+				"description": "Generated from cURL: curl -X POST \\\r\n  -H \"Content-Type: multipart/form-data\" \\\r\n  -F \"file=@/ruta/de/tu/imagen/factura.jpg\" \\\r\n  https://wilbermamanisalguero.app.n8n.cloud/webhook-test/ocr-factura\r\n"
+			},
+			"response": []
+		},
+		{
+			"name": "Registrar Factura Mysql ",
+			"request": {
+				"method": "POST",
+				"header": [
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+					}
+				],
+				"body": {
+					"mode": "raw",
+					"raw": "{\r\n    \"factura\": {\r\n        \"serieNumero\": \"E001-58\",\r\n        \"rucEmisor\": \"20608587030\",\r\n        \"fechaEmision\": \"06/12/2024\",\r\n        \"anticipoNumero\": \"\",\r\n        \"ruc\": \"201010192650\",\r\n        \"moneda\": \"DOLAR AMERICANO\",\r\n        \"facturaAnticipo\": [\r\n            {\r\n                \"numero\": \"E001-54\"\r\n            },\r\n            {\r\n                \"numero\": \"E001-55\"\r\n            },\r\n            {\r\n                \"numero\": \"E001-57\"\r\n            }\r\n        ],\r\n        \"observacion\": \"NUMERO DE CTA. BCP. DOLARES 215-7429221-1-62.\",\r\n        \"bienServicioCodigo\": \"035\",\r\n        \"medioPagoCodigo\": \"001\",\r\n        \"numeroCuentaBancoNacion\": \"00101794075\",\r\n        \"porcentajeDetraccion\": 1.5,\r\n        \"montoDetraccion\": 1255,\r\n        \"detalle\": [\r\n            {\r\n                \"cantidad\": 9798,\r\n                \"unidadMedida\": \"KILOGRAMO\",\r\n                \"descripcion\": \"POR LA VENTA DE FIBRA DE ALPACA CLASIFICADO.\",\r\n                \"valorUnitario\": 14.2122473974\r\n            },\r\n            {\r\n                \"cantidad\": 1,\r\n                \"unidadMedida\": \"UNIDAD\",\r\n                \"descripcion\": \"ANTICIPO: FACTURA NRO. E001-54\",\r\n                \"valorUnitario\": -6843.5\r\n            },\r\n            {\r\n                \"cantidad\": 1,\r\n                \"unidadMedida\": \"UNIDAD\",\r\n                \"descripcion\": \"ANTICIPO: FACTURA NRO. E001-55\",\r\n                \"valorUnitario\": -50000\r\n            },\r\n            {\r\n                \"cantidad\": 1,\r\n                \"unidadMedida\": \"UNIDAD\",\r\n                \"descripcion\": \"ANTICIPO: FACTURA NRO. E001-57\",\r\n                \"valorUnitario\": -60000\r\n            }\r\n        ],\r\n        \"totales\": {\r\n            \"subTotalVentas\": 139251.6,\r\n            \"anticipos\": 116843.5,\r\n            \"descuentos\": 0,\r\n            \"valorVenta\": 22408.1,\r\n            \"isc\": 0,\r\n            \"igv\": 0,\r\n            \"otrosCargos\": 0,\r\n            \"otrosTributos\": 0,\r\n            \"montoRedondeo\": 0,\r\n            \"importeTotal\": 22408.1\r\n        },\r\n        \"estadoFactura\": \"ACTIVO\",\r\n        \"tipoFactura\": \"VENTA\"\r\n    }\r\n}",
+					"options": {
+						"raw": {
+							"language": "json"
+						}
+					}
+				},
+				"url": {
+					"raw": "http://206.81.5.2:8081/api/facturas/registrarFactura",
+					"protocol": "http",
+					"host": [
+						"206",
+						"81",
+						"5",
+						"2"
+					],
+					"port": "8081",
+					"path": [
+						"api",
+						"facturas",
+						"registrarFactura"
+					]
+				},
+				"description": "Generated from cURL: curl --location 'http://localhost:8080/api/facturas/registrarFactura' \\\r\n--header 'Content-Type: application/json' \\\r\n--data '{\r\n  \"factura\": {\r\n    \"serieNumero\": \"F001-123\",\r\n    \"rucEmisor\": \"20123456789\",\r\n    \"fechaEmision\": \"09/12/2025\",\r\n    \"anticipoNumero\": \"E001-54\",\r\n    \"ruc\": \"20987654321\",\r\n    \"moneda\": \"PEN\",\r\n    \"facturaAnticipo\": [\r\n      {\r\n        \"numero\": \"E001-54\"\r\n      }\r\n    ],\r\n    \"observacion\": \"Factura de prueba\",\r\n    \"bienServicioCodigo\": \"001\",\r\n    \"medioPagoCodigo\": \"001\",\r\n    \"numeroCuentaBancoNacion\": \"00-000-000000\",\r\n    \"porcentajeDetraccion\": 10.5,\r\n    \"montoDetraccion\": 500.00,\r\n    \"detalle\": [\r\n      {\r\n        \"cantidad\": 1,\r\n        \"unidadMedida\": \"UNIDAD\",\r\n        \"descripcion\": \"ANTICIPO: FACTURA NRO. E001-54\",\r\n        \"valorUnitario\": -6843.5\r\n      },\r\n      {\r\n        \"cantidad\": 9798,\r\n        \"unidadMedida\": \"KILOGRAMO\",\r\n        \"descripcion\": \"POR LA VENTA DE FIBRA DE ALPACA CLASIFICADO.\",\r\n        \"valorUnitario\": 14.2122473974\r\n      }\r\n    ],\r\n    \"totales\": {\r\n      \"subTotalVentas\": 139200.50,\r\n      \"anticipos\": 6843.50,\r\n      \"descuentos\": 0,\r\n      \"valorVenta\": 132357.00,\r\n      \"isc\": 0,\r\n      \"igv\": 23824.26,\r\n      \"otrosCargos\": 0,\r\n      \"otrosTributos\": 0,\r\n      \"montoRedondeo\": 0,\r\n      \"importeTotal\": 156181.26\r\n    }\r\n  }\r\n}'"
+			},
+			"response": []
+		}
+	]
+}
