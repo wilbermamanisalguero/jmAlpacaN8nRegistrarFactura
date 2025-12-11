@@ -90,12 +90,7 @@ public class FacturaService {
         return vendedorRepository.existsByRuc(rucVendedor)
                 .compose(existe -> {
                     if (!existe) {
-                        // Si no existe, crear vendedor con nombre por defecto
-                        Vendedor vendedor = Vendedor.builder()
-                                .rucVendedor(rucVendedor)
-                                .nombreVendedor("VENDEDOR - " + rucVendedor)
-                                .build();
-                        return vendedorRepository.insert(vendedor).mapEmpty();
+                        return Future.failedFuture("El vendedor con RUC " + rucVendedor + " no existe en el sistema");
                     }
                     return Future.succeededFuture();
                 });
@@ -105,12 +100,7 @@ public class FacturaService {
         return clienteRepository.existsByRuc(rucCliente)
                 .compose(existe -> {
                     if (!existe) {
-                        // Si no existe, crear cliente con nombre por defecto
-                        Cliente cliente = Cliente.builder()
-                                .rucCliente(rucCliente)
-                                .nombreCliente("CLIENTE - " + rucCliente)
-                                .build();
-                        return clienteRepository.insert(cliente).mapEmpty();
+                        return Future.failedFuture("El cliente con RUC " + rucCliente + " no existe en el sistema");
                     }
                     return Future.succeededFuture();
                 });
