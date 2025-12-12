@@ -3,10 +3,8 @@ package com.pe.jm.alpaca.service;
 import com.pe.jm.alpaca.dto.FacturaRequest;
 import com.pe.jm.alpaca.dto.FacturaResponse;
 import com.pe.jm.alpaca.model.AnticipoAplicado;
-import com.pe.jm.alpaca.model.Cliente;
 import com.pe.jm.alpaca.model.DetalleFactura;
 import com.pe.jm.alpaca.model.Factura;
-import com.pe.jm.alpaca.model.Vendedor;
 import com.pe.jm.alpaca.repository.AnticipoAplicadoRepository;
 import com.pe.jm.alpaca.repository.ClienteRepository;
 import com.pe.jm.alpaca.repository.DetalleFacturaRepository;
@@ -34,6 +32,19 @@ public class FacturaService {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
+    /**
+     * Clase interna para transportar los datos validados entre métodos
+     */
+    private static class DatosValidados {
+        final List<AnticipoAplicado> anticiposParaInsertar;
+        final List<DetalleFactura> detallesParaInsertar;
+
+        DatosValidados(List<AnticipoAplicado> anticiposParaInsertar, List<DetalleFactura> detallesParaInsertar) {
+            this.anticiposParaInsertar = anticiposParaInsertar;
+            this.detallesParaInsertar = detallesParaInsertar;
+        }
+    }
+
     public FacturaService(FacturaRepository facturaRepository,
                           DetalleFacturaRepository detalleFacturaRepository,
                           AnticipoAplicadoRepository anticipoAplicadoRepository,
@@ -59,13 +70,17 @@ public class FacturaService {
         Long rucVendedor = Long.parseLong(facturaData.getRucEmisor());
         Long rucCliente = Long.parseLong(facturaData.getRuc());
 
-                validarYCrearVendedor(rucVendedor)
+        validarYCrearVendedor(rucVendedor)
                 .compose(v -> validarYCrearCliente(rucCliente))
-                .compose(v -> facturaRepository.insert(factura))
-                 .compose(result -> {
-                    // Procesar detalles y anticipos
-                    return procesarDetallesYAnticipos(facturaData, factura);
-                })
+                // IMPORTANTE: Primero validar los detalles ANTES de insertar la factura
+                .compose(v -> validarDetallesYAnticipos(facturaData, factura))
+                // Solo si la validación es exitosa, insertar la factura
+                .compose(datosValidados -> facturaRepository.insert(factura)
+                        .map(result -> datosValidados)) // Retornar los datos validados para la siguiente fase
+                // Finalmente insertar los detalles y anticipos
+                .compose(datosValidados -> insertarDetallesYAnticipos(
+                        datosValidados.anticiposParaInsertar,
+                        datosValidados.detallesParaInsertar))
                 .onSuccess(v -> {
                     FacturaResponse response = FacturaResponse.builder()
                             .success(true)
@@ -151,7 +166,11 @@ public class FacturaService {
         return null;
     }
 
-    private Future<Void> procesarDetallesYAnticipos(FacturaRequest.FacturaData facturaData, Factura factura) {
+    /**
+     * Valida los detalles y anticipos de la factura SIN insertar en base de datos.
+     * Retorna los datos validados listos para insertar.
+     */
+    private Future<DatosValidados> validarDetallesYAnticipos(FacturaRequest.FacturaData facturaData, Factura factura) {
         // ========== FASE 1: PREPARACIÓN ==========
         // Obtener lista de números de facturas de anticipo
         List<String> numerosAnticipos = obtenerNumerosAnticipos(facturaData);
@@ -219,11 +238,11 @@ public class FacturaService {
 
         // Si la validación falla, retornar el error SIN insertar nada
         if (validacionFuture != null) {
-            return validacionFuture;
+            return validacionFuture.map(v -> null); // Convertir Future<Void> a Future<DatosValidados>
         }
 
-        // ========== FASE 4: INSERTAR (solo si todas las validaciones pasaron) ==========
-        return insertarDetallesYAnticipos(anticiposParaInsertar, detallesParaInsertar);
+        // Si todas las validaciones pasaron, retornar los datos validados
+        return Future.succeededFuture(new DatosValidados(anticiposParaInsertar, detallesParaInsertar));
     }
 
     /**
