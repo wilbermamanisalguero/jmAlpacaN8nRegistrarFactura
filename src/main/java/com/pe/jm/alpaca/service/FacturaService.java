@@ -32,19 +32,6 @@ public class FacturaService {
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
-    /**
-     * Clase interna para transportar los datos validados entre métodos
-     */
-    private static class DatosValidados {
-        final List<AnticipoAplicado> anticiposParaInsertar;
-        final List<DetalleFactura> detallesParaInsertar;
-
-        DatosValidados(List<AnticipoAplicado> anticiposParaInsertar, List<DetalleFactura> detallesParaInsertar) {
-            this.anticiposParaInsertar = anticiposParaInsertar;
-            this.detallesParaInsertar = detallesParaInsertar;
-        }
-    }
-
     public FacturaService(FacturaRepository facturaRepository,
                           DetalleFacturaRepository detalleFacturaRepository,
                           AnticipoAplicadoRepository anticipoAplicadoRepository,
@@ -71,32 +58,27 @@ public class FacturaService {
         Long rucCliente = Long.parseLong(facturaData.getRuc());
 
         validarYCrearVendedor(rucVendedor)
-                .compose(v -> validarYCrearCliente(rucCliente))
-                // IMPORTANTE: Primero validar los detalles ANTES de insertar la factura
-                .compose(v -> validarDetallesYAnticipos(facturaData, factura))
-                // Solo si la validación es exitosa, insertar la factura
-                .compose(datosValidados -> facturaRepository.insert(factura)
-                        .map(result -> datosValidados)) // Retornar los datos validados para la siguiente fase
-                // Finalmente insertar los detalles y anticipos
-                .compose(datosValidados -> insertarDetallesYAnticipos(
-                        datosValidados.anticiposParaInsertar,
-                        datosValidados.detallesParaInsertar))
-                .onSuccess(v -> {
-                    FacturaResponse response = FacturaResponse.builder()
-                            .success(true)
-                            .message("Factura procesada exitosamente")
-                            .codigoFactura(factura.getCodigoFactura())
-                            .rucVendedor(factura.getRucVendedor())
-                            .build();
-                    future.complete(response);
-                })
-                .onFailure(error -> {
-                    FacturaResponse response = FacturaResponse.builder()
-                            .success(false)
-                            .message("Error al procesar factura: " + error.getMessage())
-                            .build();
-                    future.complete(response);
-                });
+            .compose(v -> validarYCrearCliente(rucCliente))
+            // Insertar la factura
+            .compose(v -> facturaRepository.insert(factura))
+            // Insertar los detalles y anticipos
+            .compose(v -> insertarDetallesDirectamente(facturaData, factura))
+            .onSuccess(v -> {
+                FacturaResponse response = FacturaResponse.builder()
+                    .success(true)
+                    .message("Factura procesada exitosamente")
+                    .codigoFactura(factura.getCodigoFactura())
+                    .rucVendedor(factura.getRucVendedor())
+                    .build();
+                future.complete(response);
+            })
+            .onFailure(error -> {
+                FacturaResponse response = FacturaResponse.builder()
+                    .success(false)
+                    .message("Error al procesar factura: " + error.getMessage())
+                    .build();
+                future.complete(response);
+            });
 
         return future;
     }
@@ -167,85 +149,6 @@ public class FacturaService {
     }
 
     /**
-     * Valida los detalles y anticipos de la factura SIN insertar en base de datos.
-     * Retorna los datos validados listos para insertar.
-     */
-    private Future<DatosValidados> validarDetallesYAnticipos(FacturaRequest.FacturaData facturaData, Factura factura) {
-        // ========== FASE 1: PREPARACIÓN ==========
-        // Obtener lista de números de facturas de anticipo
-        List<String> numerosAnticipos = obtenerNumerosAnticipos(facturaData);
-
-        // Listas para almacenar los objetos que se insertarán DESPUÉS de validar
-        List<AnticipoAplicado> anticiposParaInsertar = new ArrayList<>();
-        List<DetalleFactura> detallesParaInsertar = new ArrayList<>();
-
-        // ========== FASE 2: CALCULAR TOTALES ==========
-        BigDecimal anticiposAplicados = BigDecimal.ZERO;
-        BigDecimal subTotalVentas = BigDecimal.ZERO;
-
-        // Procesar cada detalle para calcular totales y preparar objetos
-        for (FacturaRequest.DetalleItem detalleItem : facturaData.getDetalle()) {
-            String descripcion = detalleItem.getDescripcion();
-
-            // Convertir a BigDecimal ANTES de operar (evita pérdida de precisión)
-            BigDecimal cantidad = BigDecimal.valueOf(detalleItem.getCantidad());
-            BigDecimal valorUnitario = BigDecimal.valueOf(detalleItem.getValorUnitario());
-            BigDecimal valorLinea = cantidad.multiply(valorUnitario);
-
-            // Verificar si es un anticipo
-            String numeroAnticipoEncontrado = buscarNumeroAnticipo(descripcion, numerosAnticipos);
-            boolean esAnticipo = numeroAnticipoEncontrado != null;
-
-            if (esAnticipo) {
-                // Acumular anticipos aplicados (usar valorUnitario directamente para anticipos)
-                anticiposAplicados = anticiposAplicados.add(valorUnitario);
-
-                // Preparar objeto anticipo (NO insertar todavía)
-                AnticipoAplicado anticipo = AnticipoAplicado.builder()
-                        .ventaRucVendedor(factura.getRucVendedor())
-                        .ventaCodigoFactura(factura.getCodigoFactura())
-                        .anticipoRucVendedor(factura.getRucVendedor())
-                        .anticipoCodigoFactura(numeroAnticipoEncontrado)
-                        .montoAplicado(valorUnitario)
-                        .build();
-                anticiposParaInsertar.add(anticipo);
-            } else {
-                // Acumular subtotal de ventas (usar cantidad * valorUnitario con precisión correcta)
-                subTotalVentas = subTotalVentas.add(valorLinea);
-            }
-
-            // Preparar objeto detalle (NO insertar todavía)
-            DetalleFactura detalle = DetalleFactura.builder()
-                    .rucVendedor(factura.getRucVendedor())
-                    .codigoFactura(factura.getCodigoFactura())
-                    .idProducto(null)
-                    .cantidad(cantidad)
-                    .unidadMedida(detalleItem.getUnidadMedida())
-                    .codigo(null)
-                    .descripcion(descripcion)
-                    .valorUnitario(valorUnitario)
-                    .build();
-            detallesParaInsertar.add(detalle);
-        }
-
-        // ========== FASE 3: VALIDAR TOTALES ==========
-        Future<Void> validacionFuture = validarTotalesSegunTipo(
-            factura,
-            facturaData,
-            anticiposAplicados,
-            subTotalVentas
-        );
-
-        // Si la validación falla, retornar el error SIN insertar nada
-        if (validacionFuture != null) {
-            return validacionFuture.map(v -> null); // Convertir Future<Void> a Future<DatosValidados>
-        }
-
-        // Si todas las validaciones pasaron, retornar los datos validados
-        return Future.succeededFuture(new DatosValidados(anticiposParaInsertar, detallesParaInsertar));
-    }
-
-    /**
      * Obtiene la lista de números de anticipos desde los datos de la factura
      */
     private List<String> obtenerNumerosAnticipos(FacturaRequest.FacturaData facturaData) {
@@ -275,112 +178,214 @@ public class FacturaService {
         return null;
     }
 
+    // /**
+    //  * Valida los detalles y anticipos de la factura SIN insertar en base de datos.
+    //  * Retorna los datos validados listos para insertar.
+    //  */
+    // private Future<DatosValidados> validarDetallesYAnticipos(FacturaRequest.FacturaData facturaData, Factura factura) {
+    //     // ========== FASE 1: PREPARACIÓN ==========
+    //     // Obtener lista de números de facturas de anticipo
+    //     List<String> numerosAnticipos = obtenerNumerosAnticipos(facturaData);
+    //
+    //     // Listas para almacenar los objetos que se insertarán DESPUÉS de validar
+    //     List<AnticipoAplicado> anticiposParaInsertar = new ArrayList<>();
+    //     List<DetalleFactura> detallesParaInsertar = new ArrayList<>();
+    //
+    //     // ========== FASE 2: CALCULAR TOTALES ==========
+    //     BigDecimal anticiposAplicados = BigDecimal.ZERO;
+    //     BigDecimal subTotalVentas = BigDecimal.ZERO;
+    //
+    //     // Procesar cada detalle para calcular totales y preparar objetos
+    //     for (FacturaRequest.DetalleItem detalleItem : facturaData.getDetalle()) {
+    //         String descripcion = detalleItem.getDescripcion();
+    //
+    //         // Convertir a BigDecimal ANTES de operar (evita pérdida de precisión)
+    //         BigDecimal cantidad = BigDecimal.valueOf(detalleItem.getCantidad());
+    //         BigDecimal valorUnitario = BigDecimal.valueOf(detalleItem.getValorUnitario());
+    //         BigDecimal valorLinea = cantidad.multiply(valorUnitario);
+    //
+    //         // Verificar si es un anticipo
+    //         String numeroAnticipoEncontrado = buscarNumeroAnticipo(descripcion, numerosAnticipos);
+    //         boolean esAnticipo = numeroAnticipoEncontrado != null;
+    //
+    //         if (esAnticipo) {
+    //             // Acumular anticipos aplicados (usar valorUnitario directamente para anticipos)
+    //             anticiposAplicados = anticiposAplicados.add(valorUnitario);
+    //
+    //             // Preparar objeto anticipo (NO insertar todavía)
+    //             AnticipoAplicado anticipo = AnticipoAplicado.builder()
+    //                     .ventaRucVendedor(factura.getRucVendedor())
+    //                     .ventaCodigoFactura(factura.getCodigoFactura())
+    //                     .anticipoRucVendedor(factura.getRucVendedor())
+    //                     .anticipoCodigoFactura(numeroAnticipoEncontrado)
+    //                     .montoAplicado(valorUnitario)
+    //                     .build();
+    //             anticiposParaInsertar.add(anticipo);
+    //         } else {
+    //             // Acumular subtotal de ventas (usar cantidad * valorUnitario con precisión correcta)
+    //             subTotalVentas = subTotalVentas.add(valorLinea);
+    //         }
+    //
+    //         // Preparar objeto detalle (NO insertar todavía)
+    //         DetalleFactura detalle = DetalleFactura.builder()
+    //                 .rucVendedor(factura.getRucVendedor())
+    //                 .codigoFactura(factura.getCodigoFactura())
+    //                 .idProducto(null)
+    //                 .cantidad(cantidad)
+    //                 .unidadMedida(detalleItem.getUnidadMedida())
+    //                 .codigo(null)
+    //                 .descripcion(descripcion)
+    //                 .valorUnitario(valorUnitario)
+    //                 .build();
+    //         detallesParaInsertar.add(detalle);
+    //     }
+    //
+    //     // ========== FASE 3: VALIDAR TOTALES ==========
+    //     Future<Void> validacionFuture = validarTotalesSegunTipo(
+    //         factura,
+    //         facturaData,
+    //         anticiposAplicados,
+    //         subTotalVentas
+    //     );
+    //
+    //     // Si la validación falla, retornar el error SIN insertar nada
+    //     if (validacionFuture != null) {
+    //         return validacionFuture.map(v -> null); // Convertir Future<Void> a Future<DatosValidados>
+    //     }
+    //
+    //     // Si todas las validaciones pasaron, retornar los datos validados
+    //     return Future.succeededFuture(new DatosValidados(anticiposParaInsertar, detallesParaInsertar));
+    // }
+
+    // /**
+    //  * Valida los totales según el tipo de factura (VENTA o ANTICIPO)
+    //  * @return Future.failedFuture si hay error de validación, null si todo está correcto
+    //  */
+    // private Future<Void> validarTotalesSegunTipo(
+    //         Factura factura,
+    //         FacturaRequest.FacturaData facturaData,
+    //         BigDecimal anticiposAplicados,
+    //         BigDecimal subTotalVentas) {
+    //
+    //     if ("VENTA".equals(factura.getTipo())) {
+    //         return validarFacturaVenta(factura, anticiposAplicados, subTotalVentas);
+    //     }
+    //
+    //     if ("ANTICIPO".equals(factura.getTipo())) {
+    //         return validarFacturaAnticipo(factura, facturaData);
+    //     }
+    //
+    //     return null; // No hay validaciones para otros tipos
+    // }
+
+    // /**
+    //  * Valida una factura de tipo VENTA
+    //  */
+    // private Future<Void> validarFacturaVenta(
+    //         Factura factura,
+    //         BigDecimal anticiposAplicados,
+    //         BigDecimal subTotalVentas) {
+    //
+    //     // Validación 1: Suma de anticipos aplicados debe coincidir con campo anticipos
+    //     if (anticiposAplicados.abs().compareTo(factura.getAnticipos()) != 0) {
+    //         return Future.failedFuture(
+    //             String.format("Error en factura de tipo VENTA: La suma de anticipos aplicados (%s) " +
+    //                 "no coincide con el campo anticipos de la factura (%s).",
+    //                 anticiposAplicados.abs(), factura.getAnticipos())
+    //         );
+    //     }
+    //
+    //     // Validación 2: Subtotal de ventas debe coincidir
+    //     if (subTotalVentas.compareTo(factura.getSubTotalVentas()) != 0) {
+    //         return Future.failedFuture(
+    //             String.format("Error en factura de tipo VENTA: El subtotal de ventas calculado (%s) " +
+    //                 "no coincide con el campo subtotalVentas de la factura (%s).",
+    //                 subTotalVentas, factura.getSubTotalVentas())
+    //         );
+    //     }
+    //
+    //     // Validación 3: Valor de venta e importe total deben coincidir
+    //     BigDecimal valorVentaCalculado = subTotalVentas.subtract(anticiposAplicados.abs());
+    //
+    //     if (factura.getValorVenta().compareTo(valorVentaCalculado) != 0 ||
+    //         factura.getImporteTotal().compareTo(valorVentaCalculado) != 0) {
+    //         return Future.failedFuture(
+    //             String.format("Error en factura de tipo VENTA: El valor de venta calculado (%s) " +
+    //                 "no coincide con el campo valorVenta (%s) o el importeTotal (%s) de la factura.",
+    //                 valorVentaCalculado, factura.getValorVenta(), factura.getImporteTotal())
+    //         );
+    //     }
+    //
+    //     return null; // Todas las validaciones pasaron
+    // }
+
+    // /**
+    //  * Valida una factura de tipo ANTICIPO
+    //  */
+    // private Future<Void> validarFacturaAnticipo(
+    //         Factura factura,
+    //         FacturaRequest.FacturaData facturaData) {
+    //
+    //     if (facturaData.getDetalle() == null || facturaData.getDetalle().isEmpty()) {
+    //         return null; // No hay detalles para validar
+    //     }
+    //
+    //     BigDecimal valorUnitarioPrimerDetalle =
+    //         BigDecimal.valueOf(Math.abs(facturaData.getDetalle().get(0).getValorUnitario()));
+    //
+    //     // Validar que subtotalVentas == importeTotal == valorUnitario del primer detalle
+    //     if (factura.getSubTotalVentas().compareTo(factura.getImporteTotal()) != 0 ||
+    //         factura.getSubTotalVentas().compareTo(valorUnitarioPrimerDetalle) != 0) {
+    //         return Future.failedFuture(
+    //             String.format("Error en factura de tipo ANTICIPO: El subtotal y el importe total " +
+    //                 "deben ser iguales al valor del detalle. Valores: valorDetalle=%s, " +
+    //                 "importeTotal=%s, subTotalVentas=%s",
+    //                 valorUnitarioPrimerDetalle, factura.getImporteTotal(), factura.getSubTotalVentas())
+    //         );
+    //     }
+    //
+    //     return null; // Validación exitosa
+    // }
+
     /**
-     * Valida los totales según el tipo de factura (VENTA o ANTICIPO)
-     * @return Future.failedFuture si hay error de validación, null si todo está correcto
+     * Inserta directamente los detalles y anticipos sin validaciones
      */
-    private Future<Void> validarTotalesSegunTipo(
-            Factura factura,
-            FacturaRequest.FacturaData facturaData,
-            BigDecimal anticiposAplicados,
-            BigDecimal subTotalVentas) {
-
-        if ("VENTA".equals(factura.getTipo())) {
-            return validarFacturaVenta(factura, anticiposAplicados, subTotalVentas);
-        }
-
-        if ("ANTICIPO".equals(factura.getTipo())) {
-            return validarFacturaAnticipo(factura, facturaData);
-        }
-
-        return null; // No hay validaciones para otros tipos
-    }
-
-    /**
-     * Valida una factura de tipo VENTA
-     */
-    private Future<Void> validarFacturaVenta(
-            Factura factura,
-            BigDecimal anticiposAplicados,
-            BigDecimal subTotalVentas) {
-
-        // Validación 1: Suma de anticipos aplicados debe coincidir con campo anticipos
-        if (anticiposAplicados.abs().compareTo(factura.getAnticipos()) != 0) {
-            return Future.failedFuture(
-                String.format("Error en factura de tipo VENTA: La suma de anticipos aplicados (%s) " +
-                    "no coincide con el campo anticipos de la factura (%s).",
-                    anticiposAplicados.abs(), factura.getAnticipos())
-            );
-        }
-
-        // Validación 2: Subtotal de ventas debe coincidir
-        if (subTotalVentas.compareTo(factura.getSubTotalVentas()) != 0) {
-            return Future.failedFuture(
-                String.format("Error en factura de tipo VENTA: El subtotal de ventas calculado (%s) " +
-                    "no coincide con el campo subtotalVentas de la factura (%s).",
-                    subTotalVentas, factura.getSubTotalVentas())
-            );
-        }
-
-        // Validación 3: Valor de venta e importe total deben coincidir
-        BigDecimal valorVentaCalculado = subTotalVentas.subtract(anticiposAplicados.abs());
-
-        if (factura.getValorVenta().compareTo(valorVentaCalculado) != 0 ||
-            factura.getImporteTotal().compareTo(valorVentaCalculado) != 0) {
-            return Future.failedFuture(
-                String.format("Error en factura de tipo VENTA: El valor de venta calculado (%s) " +
-                    "no coincide con el campo valorVenta (%s) o el importeTotal (%s) de la factura.",
-                    valorVentaCalculado, factura.getValorVenta(), factura.getImporteTotal())
-            );
-        }
-
-        return null; // Todas las validaciones pasaron
-    }
-
-    /**
-     * Valida una factura de tipo ANTICIPO
-     */
-    private Future<Void> validarFacturaAnticipo(
-            Factura factura,
-            FacturaRequest.FacturaData facturaData) {
-
-        if (facturaData.getDetalle() == null || facturaData.getDetalle().isEmpty()) {
-            return null; // No hay detalles para validar
-        }
-
-        BigDecimal valorUnitarioPrimerDetalle =
-            BigDecimal.valueOf(Math.abs(facturaData.getDetalle().get(0).getValorUnitario()));
-
-        // Validar que subtotalVentas == importeTotal == valorUnitario del primer detalle
-        if (factura.getSubTotalVentas().compareTo(factura.getImporteTotal()) != 0 ||
-            factura.getSubTotalVentas().compareTo(valorUnitarioPrimerDetalle) != 0) {
-            return Future.failedFuture(
-                String.format("Error en factura de tipo ANTICIPO: El subtotal y el importe total " +
-                    "deben ser iguales al valor del detalle. Valores: valorDetalle=%s, " +
-                    "importeTotal=%s, subTotalVentas=%s",
-                    valorUnitarioPrimerDetalle, factura.getImporteTotal(), factura.getSubTotalVentas())
-            );
-        }
-
-        return null; // Validación exitosa
-    }
-
-    /**
-     * Inserta todos los detalles y anticipos en la base de datos
-     */
-    private Future<Void> insertarDetallesYAnticipos(
-            List<AnticipoAplicado> anticiposParaInsertar,
-            List<DetalleFactura> detallesParaInsertar) {
-
+    private Future<Void> insertarDetallesDirectamente(FacturaRequest.FacturaData facturaData, Factura factura) {
+        List<String> numerosAnticipos = obtenerNumerosAnticipos(facturaData);
         List<Future<Long>> futures = new ArrayList<>();
 
-        // Insertar todos los anticipos
-        for (AnticipoAplicado anticipo : anticiposParaInsertar) {
-            futures.add(anticipoAplicadoRepository.insert(anticipo));
-        }
+        // Procesar cada detalle
+        for (FacturaRequest.DetalleItem detalleItem : facturaData.getDetalle()) {
+            String descripcion = detalleItem.getDescripcion();
+            BigDecimal cantidad = BigDecimal.valueOf(detalleItem.getCantidad());
+            BigDecimal valorUnitario = BigDecimal.valueOf(detalleItem.getValorUnitario());
 
-        // Insertar todos los detalles
-        for (DetalleFactura detalle : detallesParaInsertar) {
+            // Verificar si es un anticipo
+            String numeroAnticipoEncontrado = buscarNumeroAnticipo(descripcion, numerosAnticipos);
+
+            if (numeroAnticipoEncontrado != null) {
+                // Insertar anticipo
+                AnticipoAplicado anticipo = AnticipoAplicado.builder()
+                        .ventaRucVendedor(factura.getRucVendedor())
+                        .ventaCodigoFactura(factura.getCodigoFactura())
+                        .anticipoRucVendedor(factura.getRucVendedor())
+                        .anticipoCodigoFactura(numeroAnticipoEncontrado)
+                        .montoAplicado(valorUnitario)
+                        .build();
+                futures.add(anticipoAplicadoRepository.insert(anticipo));
+            }
+
+            // Insertar detalle
+            DetalleFactura detalle = DetalleFactura.builder()
+                    .rucVendedor(factura.getRucVendedor())
+                    .codigoFactura(factura.getCodigoFactura())
+                    .idProducto(null)
+                    .cantidad(cantidad)
+                    .unidadMedida(detalleItem.getUnidadMedida())
+                    .codigo(null)
+                    .descripcion(descripcion)
+                    .valorUnitario(valorUnitario)
+                    .build();
             futures.add(detalleFacturaRepository.insert(detalle));
         }
 
